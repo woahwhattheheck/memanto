@@ -1,0 +1,3 @@
+# Only the SQL extra; no model runtimes or llama.cpp-related extras.
+# Install in an isolated cloud environment, not on the owner's PC.
+agno[sql] @ git+https://github.com/agno-agi/agno.git@8f36eaf2d18e91afa7b327eec66a3cd3685dcb87#subdirectory=libs/agno
