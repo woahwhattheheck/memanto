@@ -37,15 +37,17 @@ All Memanto operations are performed via shell commands. Never simulate commands
 memanto remember "Generalized principle or rule" --type TYPE --tags "tag1,tag2" --confidence <0.0-1.0> --provenance PROVENANCE --source <agent_name>
 
 # Search memories (Semantic recall for context building)
-memanto recall "query string" --limit 10 --type TYPE --min-similarity 0.8
+# Reads have no --source, so pass --tool: it is how Memanto knows which agent
+# is calling, which drives the live connection view and session attribution.
+memanto recall "query string" --limit 10 --type TYPE --min-similarity 0.8 --tool <agent_name>
 
 # Temporal search variants (no query needed)
-memanto recall --recent --limit 10                 # newest memories first
-memanto recall --as-of "YYYY-MM-DD"                # memory state at a past point in time
-memanto recall --changed-since "last 7 days"       # memories created or updated recently
+memanto recall --recent --limit 10 --tool <agent_name>            # newest memories first
+memanto recall --as-of "YYYY-MM-DD" --tool <agent_name>           # memory state at a past point in time
+memanto recall --changed-since "last 7 days" --tool <agent_name>  # memories created or updated recently
 
 # Grounded RAG answer (Synthesizes memory into a direct answer)
-memanto answer "Question about past decisions or commitments"
+memanto answer "Question about past decisions or commitments" --tool <agent_name>
 
 # Edit existing memory
 memanto edit MEMORY_ID --content "Updated content" --type TYPE --confidence 0.95
@@ -143,6 +145,7 @@ Always pass `--tags` with 2 to 5 specific, lowercase, hyphenated tags. Tags make
 
 4. **Missing Metadata Flags**
    - Never omit `--type`, `--confidence`, `--provenance`, or `--source`. Untyped memories pollute retrieval quality.
+   - On `recall` and `answer`, always pass `--tool <agent_name>`. Reads carry no `--source`, and this is how Memanto identifies the calling agent.
 
 5. **Expecting Invisible Context Injection**
    - Do not expect hooks or background tools to automatically inject dynamic memories into chat UI. If context is needed, run `memanto recall` explicitly.
@@ -155,7 +158,7 @@ Always pass `--tags` with 2 to 5 specific, lowercase, hyphenated tags. Tags make
 ### Workflow 1: Session Start / Task Initiation
 ```bash
 # Check for existing architectural decisions and instructions relevant to the task
-memanto recall "authentication setup guidelines" --limit 10
+memanto recall "authentication setup guidelines" --limit 10 --tool <agent_name>
 ```
 
 ### Workflow 2: Learning from Error / Correction
@@ -222,12 +225,12 @@ Before storing, ask yourself: *"Will this generalized principle fundamentally ch
 - **DO NOT STORE**: Step-by-step progress, routine bug fixes, UI tweaks, temporary code snippets, or literal chat summaries.
 
 ### 4. RECALL TRIGGER MATRIX (WHEN TO SEARCH MEMORY)
-Do not guess or write code blindly. Run `memanto recall` (or `memanto answer`) using {tool_phrase} before acting if any of the following occur:
+Do not guess or write code blindly. Run `memanto recall` (or `memanto answer`) using {tool_phrase} before acting if any of the following occur. Always pass `--tool {agent_id}` on these reads: they carry no `--source`, and that flag is how Memanto identifies you as the calling agent.
 - **[TASK INITIATION]** Before starting a complex feature, refactor, or multi-file architecture task, search for relevant stack constraints, rules, and prior decisions.
 - **[AMBIGUOUS REPAIR / ERROR]** When facing a cryptic build failure, test failure, or environment bug, search memory for past workarounds and error post-mortems.
 - **[UNSTATED PREFERENCE]** When about to choose a library, pattern, or naming convention that isn't specified in the prompt, search memory to see if a preference was established in an earlier session.
 - **[EXPLICIT USER QUESTION]** When the user asks "What did we decide about X?", "Check memory", or "Recall context", run `memanto recall` (or `memanto answer`) immediately.
-- **[FRESH SESSION / CONTEXT REFRESH]** At session start or after switching tasks, run `memanto recall --recent` to retrieve active task state and recent commitments.
+- **[FRESH SESSION / CONTEXT REFRESH]** At session start or after switching tasks, run `memanto recall --recent --tool {agent_id}` to retrieve active task state and recent commitments.
 
 ### 5. HOW TO EXECUTE
 For all command syntax, required flags, memory types, tagging best practices, and CLI options, refer to the `memanto-memory` SKILL.md. You MUST read this skill before running any memory operations if you do not know the exact command schema.

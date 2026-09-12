@@ -10,6 +10,7 @@ import json
 import os
 import re
 import signal
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,16 +24,24 @@ from fastapi import (
     Request,
     Response,
 )
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from memanto.app.clients.agent_conflict import (
+    CANCELLED_MESSAGE,
+    conflict_progress_step,
+    describe_conflict_progress,
+)
 from memanto.app.clients.backend import Backend
 from memanto.app.config import settings
 from memanto.app.routes.auth_deps import (
+    SESSION_COOKIE_NAME,
     _is_cross_site_browser_request,
     clear_session_cookie,
     set_session_cookie,
 )
+from memanto.app.services.session_service import get_session_service
+from memanto.app.utils.errors import MemoryOperationError
 from memanto.app.utils.temporal_helpers import utc_date_str
 from memanto.app.utils.validation import validate_safe_id
 from memanto.cli.client.direct_client import DirectClient
@@ -49,6 +58,10 @@ _config_manager = ConfigManager()
 STATIC_DIR = Path(__file__).parent.parent / "static"
 _SAFE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# Upper bound on the activity window a caller can request. Matches the log's
+# own retention, so a larger value could only ever scan empty days.
+ACTIVITY_MAX_DAYS = 30
+
 
 def _validate_agent_id(agent_id: str) -> None:
     """Reject agent identifiers that cannot be safely embedded in file paths."""
@@ -56,6 +69,36 @@ def _validate_agent_id(agent_id: str) -> None:
         validate_safe_id(agent_id, "agent_id")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid agent identifier")
+
+
+def _resolve_ui_agent_id(
+    *,
+    body_agent_id: str | None = None,
+    query_agent_id: str | None = None,
+    request: Request | None = None,
+) -> str:
+    """Resolve agent for UI routes: explicit id, session marker, then browser cookie."""
+    for candidate in (body_agent_id, query_agent_id):
+        if candidate and str(candidate).strip():
+            return str(candidate).strip()
+
+    aid, _token = _config_manager.get_active_session()
+    if aid:
+        return aid
+
+    if request is not None:
+        cookie = request.cookies.get(SESSION_COOKIE_NAME)
+        if cookie:
+            try:
+                session_service = get_session_service()
+                payload = session_service.validate_session(cookie)
+                session = session_service.get_session(payload.agent_id)
+                if session and session.is_active():
+                    return session.agent_id
+            except Exception:
+                pass
+
+    raise HTTPException(status_code=400, detail="No active agent")
 
 
 def _validate_summary_key(agent_id: str, date: str) -> None:
@@ -518,6 +561,7 @@ async def update_api_key(body: dict, _: None = Depends(_require_local)):
 
 @router.get("/api/ui/conflicts")
 async def list_conflicts(
+    request: Request,
     agent_id: str | None = None,
     date: str | None = None,
     _: None = Depends(_require_local),
@@ -526,11 +570,10 @@ async def list_conflicts(
     List unresolved conflicts for an agent.
     Uses DirectClient.list_conflicts under the hood.
     """
-    if not agent_id:
-        aid, _session_token = _config_manager.get_active_session()
-        if not aid:
-            return {"conflicts": [], "count": 0, "message": "No active agent"}
-        agent_id = aid
+    try:
+        agent_id = _resolve_ui_agent_id(query_agent_id=agent_id, request=request)
+    except HTTPException:
+        return {"conflicts": [], "count": 0, "message": "No active agent"}
     if not date:
         date = utc_date_str()
     _validate_summary_key(str(agent_id), str(date))
@@ -651,19 +694,16 @@ async def read_daily_summary(
 
 @router.post("/api/ui/daily-summary")
 async def generate_daily_summary(
-    body: dict | None = None, _: None = Depends(_require_local)
+    request: Request,
+    body: dict | None = None,
+    _: None = Depends(_require_local),
 ):
     """
     Trigger an on-demand daily summary for the active agent.
     Expects (optional): {"agent_id": "...", "date": "YYYY-MM-DD"}
     """
     body = body or {}
-    agent_id = body.get("agent_id")
-    if not agent_id:
-        aid, _session_token = _config_manager.get_active_session()
-        if not aid:
-            raise HTTPException(status_code=400, detail="No active agent")
-        agent_id = aid
+    agent_id = _resolve_ui_agent_id(body_agent_id=body.get("agent_id"), request=request)
     date = body.get("date") or utc_date_str()
     _validate_summary_key(str(agent_id), str(date))
 
@@ -682,7 +722,9 @@ async def generate_daily_summary(
 
 @router.post("/api/ui/conflicts/generate")
 async def generate_conflict_report(
-    body: dict | None = None, _: None = Depends(_require_local)
+    request: Request,
+    body: dict | None = None,
+    _: None = Depends(_require_local),
 ):
     """
     Trigger an on-demand conflict report for the active agent. This is the
@@ -690,12 +732,7 @@ async def generate_conflict_report(
     Expects (optional): {"agent_id": "...", "date": "YYYY-MM-DD"}
     """
     body = body or {}
-    agent_id = body.get("agent_id")
-    if not agent_id:
-        aid, _session_token = _config_manager.get_active_session()
-        if not aid:
-            raise HTTPException(status_code=400, detail="No active agent")
-        agent_id = aid
+    agent_id = _resolve_ui_agent_id(body_agent_id=body.get("agent_id"), request=request)
     date = body.get("date") or utc_date_str()
     _validate_summary_key(str(agent_id), str(date))
 
@@ -708,6 +745,144 @@ async def generate_conflict_report(
         return {"agent_id": agent_id, "date": date, **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/api/ui/conflicts/generate/stream",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "SSE stream of conflict-detection progress and terminal payloads. "
+                "Events: `progress` (status updates with optional `message`, `step`, "
+                "and `detail`), `result` (final report JSON), `error` (failure message), "
+                "and `done` (stream end). Comment lines `: keepalive` are sent during "
+                "long waits."
+            ),
+            "content": {
+                "text/event-stream": {
+                    "schema": {
+                        "type": "string",
+                        "format": "event-stream",
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "No API key configured",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {"detail": {"type": "string"}},
+                        "required": ["detail"],
+                    }
+                }
+            },
+        },
+    },
+)
+async def generate_conflict_report_stream(
+    request: Request,
+    body: dict | None = None,
+    _: None = Depends(_require_local),
+):
+    """Stream conflict-detection progress from Moorche agent/run as SSE."""
+    body = body or {}
+    agent_id = _resolve_ui_agent_id(body_agent_id=body.get("agent_id"), request=request)
+    date = body.get("date") or utc_date_str()
+    _validate_summary_key(str(agent_id), str(date))
+
+    client = _build_ui_direct_client()
+    if client is None:
+        raise HTTPException(status_code=400, detail="No API key configured")
+
+    async def event_generator():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[tuple[str, str | None, Any]] = asyncio.Queue()
+        cancel_event = threading.Event()
+        active = True
+
+        def safe_put(item: tuple[str, str | None, Any]) -> None:
+            if active:
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+
+        def on_event(event_name: str, data: dict[str, Any]) -> None:
+            if cancel_event.is_set():
+                return
+            safe_put(("progress", event_name, data))
+
+        def worker() -> None:
+            try:
+                result = client.generate_conflict_report(
+                    agent_id=str(agent_id),
+                    date=str(date),
+                    on_progress=on_event,
+                    cancel_event=cancel_event,
+                )
+                if cancel_event.is_set():
+                    return
+                safe_put(
+                    (
+                        "result",
+                        None,
+                        {"agent_id": agent_id, "date": date, **result},
+                    )
+                )
+            except MemoryOperationError as exc:
+                if str(exc) == CANCELLED_MESSAGE:
+                    return
+                safe_put(("error", None, str(exc)))
+            except Exception as exc:
+                safe_put(("error", None, str(exc)))
+
+        worker_future = loop.run_in_executor(None, worker)
+
+        try:
+            yield (
+                "event: progress\n"
+                f"data: {json.dumps({'event': 'started', 'message': 'Connecting to conflict detection…', 'step': 'start'})}\n\n"
+            )
+
+            while True:
+                try:
+                    kind, event_name, payload = await asyncio.wait_for(
+                        queue.get(), timeout=15.0
+                    )
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if kind == "progress":
+                    data = payload if isinstance(payload, dict) else {}
+                    message = describe_conflict_progress(str(event_name), data)
+                    step = conflict_progress_step(str(event_name), data)
+                    if message or step:
+                        yield (
+                            "event: progress\n"
+                            f"data: {json.dumps({'event': event_name, 'message': message, 'step': step, 'detail': data}, default=str)}\n\n"
+                        )
+                elif kind == "result":
+                    yield f"event: result\ndata: {json.dumps(payload, default=str)}\n\n"
+                    yield "event: done\ndata: {}\n\n"
+                    break
+                elif kind == "error":
+                    yield f"event: error\ndata: {json.dumps({'message': payload})}\n\n"
+                    yield "event: done\ndata: {}\n\n"
+                    break
+        finally:
+            active = False
+            cancel_event.set()
+            worker_future.cancel()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/api/ui/conflicts/resolve")
@@ -799,6 +974,40 @@ async def get_connections(_: None = Depends(_require_local)):
             }
         )
     return {"cwd": str(Path.cwd()), "connections": items}
+
+
+@router.get("/api/ui/sessions")
+async def get_sessions(days: int = 7, _: None = Depends(_require_local)):
+    """MEMANTO sessions with the tools that took part, plus per-tool liveness.
+
+    Complements `/api/ui/connections`, which reports where MEMANTO is
+    *installed*. This reports what has actually been running.
+    """
+    from memanto.app.services.activity_service import get_activity_service
+
+    days = max(1, min(int(days), ACTIVITY_MAX_DAYS))
+    service = get_activity_service()
+    tools = service.live_tools(days)
+    return {
+        "days": days,
+        "sessions": service.list_sessions(days),
+        "tools": tools,
+        "live_count": sum(1 for t in tools if t["live"]),
+    }
+
+
+@router.get("/api/ui/sessions/{session_id}")
+async def get_session_detail(
+    session_id: str, days: int = 30, _: None = Depends(_require_local)
+):
+    """One MEMANTO session's summary plus its full event timeline."""
+    from memanto.app.services.activity_service import get_activity_service
+
+    days = max(1, min(int(days), ACTIVITY_MAX_DAYS))
+    detail = get_activity_service().get_session(session_id, days)
+    if detail["session"] is None:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+    return detail
 
 
 @router.get("/api/ui/browse")

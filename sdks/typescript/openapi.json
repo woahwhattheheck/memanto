@@ -3809,6 +3809,75 @@
         }
       }
     },
+    "/api/ui/conflicts/generate/stream": {
+      "post": {
+        "tags": [
+          "Web UI"
+        ],
+        "summary": "Generate Conflict Report Stream",
+        "description": "Stream conflict-detection progress from Moorche agent/run as SSE.",
+        "operationId": "generate_conflict_report_stream_api_ui_conflicts_generate_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream of conflict-detection progress and terminal payloads. Events: `progress` (status updates with optional `message`, `step`, and `detail`), `result` (final report JSON), `error` (failure message), and `done` (stream end). Comment lines `: keepalive` are sent during long waits.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "event-stream"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No API key configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object",
+                  "required": [
+                    "detail"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ui/conflicts/resolve": {
       "post": {
         "tags": [
@@ -3865,6 +3934,99 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ui/sessions": {
+      "get": {
+        "tags": [
+          "Web UI"
+        ],
+        "summary": "Get Sessions",
+        "description": "MEMANTO sessions with the tools that took part, plus per-tool liveness.\n\nComplements `/api/ui/connections`, which reports where MEMANTO is\n*installed*. This reports what has actually been running.",
+        "operationId": "get_sessions_api_ui_sessions_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 7,
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ui/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "Web UI"
+        ],
+        "summary": "Get Session Detail",
+        "description": "One MEMANTO session's summary plus its full event timeline.",
+        "operationId": "get_session_detail_api_ui_sessions__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
