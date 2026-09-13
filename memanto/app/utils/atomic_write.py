@@ -13,12 +13,29 @@ from pathlib import Path
 from typing import BinaryIO
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist a directory-entry update after an atomic replace on POSIX."""
+    if os.name == "nt":
+        return
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    fd = os.open(path, flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Replace *path* only after a complete same-directory write.
 
     Writing the temporary file next to the destination keeps ``os.replace``
     atomic on the same filesystem. Restrictive permissions are applied before
-    the file becomes visible at its final path.
+    the file becomes visible at its final path. On POSIX, the containing
+    directory is synced after replacement so the new directory entry is also
+    durable across a sudden power loss.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path: Path | None = None
@@ -42,6 +59,7 @@ def atomic_write_text(path: Path, content: str) -> None:
             pass  # Windows may not support POSIX permission bits
         os.replace(tmp_path, path)
         tmp_path = None
+        _fsync_directory(path.parent)
     finally:
         if tmp_path is not None:
             try:
