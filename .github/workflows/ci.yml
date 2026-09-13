@@ -5,6 +5,9 @@ on:
     branches: main
     paths-ignore:
       - 'EXTERNAL_CONTRIBUTORS.md'
+  pull_request:
+    paths-ignore:
+      - 'EXTERNAL_CONTRIBUTORS.md'
   pull_request_review:
     types: [submitted]
 
@@ -13,7 +16,7 @@ permissions:
 
 jobs:
   lint-and-type-check:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
     runs-on: ubuntu-latest
 
     steps:
@@ -41,7 +44,7 @@ jobs:
 
   test:
     needs: lint-and-type-check
-    if: github.event_name == 'push' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
     runs-on: ubuntu-latest
     strategy:
       matrix:
