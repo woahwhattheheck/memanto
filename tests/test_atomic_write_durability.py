@@ -9,12 +9,16 @@ from memanto.app.utils import atomic_write as atomic_write_module
 from memanto.app.utils.atomic_write import atomic_write_text
 
 
-def test_atomic_write_syncs_parent_after_replace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_write_syncs_parent_after_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "state.json"
     events: list[tuple[str, Path]] = []
     real_replace = atomic_write_module.os.replace
 
-    def recording_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    def recording_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
         real_replace(source, destination)
         events.append(("replace", Path(destination)))
 
@@ -37,7 +41,9 @@ def test_atomic_write_syncs_created_parent_chain_inside_out(
     events: list[tuple[str, Path]] = []
     real_replace = atomic_write_module.os.replace
 
-    def recording_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    def recording_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
         real_replace(source, destination)
         events.append(("replace", Path(destination)))
 
@@ -82,7 +88,9 @@ def test_atomic_write_does_not_dirsync_when_replace_fails(
     target = tmp_path / "state.json"
     dirsync_calls: list[Path] = []
 
-    def failing_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    def failing_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
         raise OSError("replace failed")
 
     monkeypatch.setattr(atomic_write_module.os, "replace", failing_replace)
