@@ -21,7 +21,9 @@ def test_empty_and_whitespace_markers_do_not_identify_client(monkeypatch) -> Non
     assert detected.display == "Unknown client"
 
 
-def test_empty_higher_priority_marker_does_not_mask_nonempty_marker(monkeypatch) -> None:
+def test_empty_higher_priority_marker_does_not_mask_nonempty_marker(
+    monkeypatch,
+) -> None:
     _clear_identity_environment(monkeypatch)
     monkeypatch.setenv("CURSOR_TRACE_ID", "")
     monkeypatch.setenv("CLAUDECODE", "1")
