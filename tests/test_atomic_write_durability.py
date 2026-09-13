@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -130,7 +131,7 @@ def test_fsync_directory_flushes_and_closes_descriptor(
     atomic_write_module._fsync_directory(tmp_path)
 
     assert calls[0][0] == "open"
-    opened_path, flags = calls[0][1]
+    opened_path, flags = cast(tuple[Path, int], calls[0][1])
     assert opened_path == tmp_path
     assert flags & os.O_RDONLY == os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
