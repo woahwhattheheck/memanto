@@ -110,6 +110,21 @@ class SessionService:
             # access still follow the owning user's ACL in that environment.
             pass
 
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        """Persist a directory-entry update after an atomic replace on POSIX."""
+        if os.name == "nt":
+            return
+
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        fd = os.open(str(path), flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
     def _harden_session_storage(self) -> None:
         """Create and protect both new and pre-existing session artifacts.
 
@@ -153,7 +168,8 @@ class SessionService:
         Writing directly to the live path with ``O_TRUNC`` can destroy the only
         valid session record if serialization or the process fails mid-write.
         A sibling temporary file keeps readers on the previous complete record
-        until the replacement is ready.
+        until the replacement is ready. On POSIX, the containing directory is
+        synced after replacement so the new session record is power-loss durable.
         """
         tmp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -166,6 +182,7 @@ class SessionService:
                 os.fsync(tmp_file.fileno())
             os.replace(tmp_path, path)
             self._set_private_permissions(path, self._PRIVATE_FILE_MODE)
+            self._fsync_directory(path.parent)
         finally:
             try:
                 tmp_path.unlink()
@@ -183,7 +200,8 @@ class SessionService:
         read/write so concurrent first-start workers cannot return divergent
         secrets. The file has restrictive permissions from creation, and an
         existing-but-empty file (e.g. left behind by a crash mid-write) is
-        safely rewritten by the lock holder.
+        safely rewritten by the lock holder. On POSIX, the containing directory
+        is synced before the newly generated secret is returned.
         """
         secret_file = self.sessions_dir.parent / "secret_key"
         secret_file.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +226,7 @@ class SessionService:
                     secret_file.chmod(0o600)
                 except OSError:
                     pass  # Windows may not support chmod
+                self._fsync_directory(secret_file.parent)
             finally:
                 temp_file.unlink(missing_ok=True)
             return secret
