@@ -1,0 +1,63 @@
+name: Agno migration adapter
+
+on:
+  pull_request:
+    paths:
+      - 'examples/migrations/agno-user-memory/**'
+      - 'memanto/cli/migrate/**'
+      - 'memanto/app/services/okf_export_service.py'
+      - 'tests/test_okf.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/agno-adapter.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'examples/migrations/agno-user-memory/**'
+      - 'memanto/cli/migrate/**'
+      - 'memanto/app/services/okf_export_service.py'
+      - 'tests/test_okf.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/agno-adapter.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  adapter-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Memanto dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Install pinned Agno source dependency
+        run: uv pip install --python .venv/bin/python -r examples/migrations/agno-user-memory/requirements-source.txt
+
+      - name: Create version fallback
+        run: echo '__version__ = "0.0.0.dev0"' > memanto/app/_version.py
+
+      - name: Run adapter and OKF regressions
+        run: >-
+          uv run pytest -q
+          examples/migrations/agno-user-memory/tests/test_convert.py
+          examples/migrations/agno-user-memory/tests/test_agno.py
+          examples/migrations/agno-user-memory/tests/test_memanto.py
+          tests/test_okf.py
+
+      - name: Lint adapter
+        run: uv run ruff check examples/migrations/agno-user-memory
+
+      - name: Check adapter formatting
+        run: uv run ruff format --check examples/migrations/agno-user-memory
