@@ -110,7 +110,7 @@ def test_atomic_write_does_not_dirsync_when_replace_fails(
 def test_fsync_directory_flushes_and_closes_descriptor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[tuple[str, object]] = []
+    calls: list[tuple[str, tuple[Path, int] | int]] = []
     fake_fd = 91
 
     def fake_open(path: str | os.PathLike[str], flags: int) -> int:
@@ -130,7 +130,9 @@ def test_fsync_directory_flushes_and_closes_descriptor(
     atomic_write_module._fsync_directory(tmp_path)
 
     assert calls[0][0] == "open"
-    opened_path, flags = calls[0][1]
+    open_payload = calls[0][1]
+    assert isinstance(open_payload, tuple)
+    opened_path, flags = open_payload
     assert opened_path == tmp_path
     assert flags & os.O_RDONLY == os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
