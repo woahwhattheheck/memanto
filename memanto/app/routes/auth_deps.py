@@ -341,4 +341,8 @@ def _maybe_auto_recreate_session(
     if x_session_token:
         response.headers["X-Session-Token"] = recreated.session_token
 
+    # The request continues immediately with this fresh session. Bind it just
+    # like the normal validation path so activity emitted by the current
+    # remember/recall operation is attributed to the replacement session.
+    set_memanto_session(recreated.session_id)
     return recreated
