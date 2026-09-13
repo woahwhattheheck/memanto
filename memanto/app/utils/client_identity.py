@@ -194,7 +194,7 @@ def detect_client() -> ClientIdentity:
         )
 
     for env_names, tool, display in _ENV_SIGNATURES:
-        if any(name in os.environ for name in env_names):
+        if any(os.environ.get(name, "").strip() for name in env_names):
             return ClientIdentity(tool=tool, display=display, project_dir=project_dir)
 
     return replace(UNKNOWN_CLIENT, project_dir=project_dir)
