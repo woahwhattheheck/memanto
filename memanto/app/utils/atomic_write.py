@@ -13,14 +13,53 @@ from pathlib import Path
 from typing import BinaryIO
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist a directory-entry update after an atomic replace on POSIX."""
+    if os.name == "nt":
+        return
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    fd = os.open(path, flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _ensure_parent_directory(path: Path) -> tuple[Path, ...]:
+    """Create *path* and return the directories that may have been created.
+
+    The returned paths are ordered from the destination parent outward.  A
+    concurrent creator can make one of these directories between the scan and
+    ``mkdir``; syncing its parent is still safe and conservatively closes the
+    same durability gap.
+    """
+    missing: list[Path] = []
+    current = path
+    while not current.exists():
+        missing.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+    path.mkdir(parents=True, exist_ok=True)
+    return tuple(missing)
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Replace *path* only after a complete same-directory write.
 
     Writing the temporary file next to the destination keeps ``os.replace``
     atomic on the same filesystem. Restrictive permissions are applied before
-    the file becomes visible at its final path.
+    the file becomes visible at its final path. On POSIX, the containing
+    directory is synced after replacement. If this call also created parent
+    directories, each new directory entry is then persisted outward through
+    the first ancestor that already existed.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    created_directories = _ensure_parent_directory(path.parent)
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -42,6 +81,9 @@ def atomic_write_text(path: Path, content: str) -> None:
             pass  # Windows may not support POSIX permission bits
         os.replace(tmp_path, path)
         tmp_path = None
+        _fsync_directory(path.parent)
+        for directory in created_directories:
+            _fsync_directory(directory.parent)
     finally:
         if tmp_path is not None:
             try:
