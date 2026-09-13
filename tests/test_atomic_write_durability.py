@@ -30,6 +30,52 @@ def test_atomic_write_syncs_parent_after_replace(tmp_path: Path, monkeypatch: py
     assert events == [("replace", target), ("dirsync", tmp_path)]
 
 
+def test_atomic_write_syncs_created_parent_chain_inside_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "outer" / "inner" / "state.json"
+    events: list[tuple[str, Path]] = []
+    real_replace = atomic_write_module.os.replace
+
+    def recording_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+        real_replace(source, destination)
+        events.append(("replace", Path(destination)))
+
+    def recording_dirsync(path: Path) -> None:
+        events.append(("dirsync", path))
+
+    monkeypatch.setattr(atomic_write_module.os, "replace", recording_replace)
+    monkeypatch.setattr(atomic_write_module, "_fsync_directory", recording_dirsync)
+
+    atomic_write_text(target, "durable")
+
+    assert target.read_text(encoding="utf-8") == "durable"
+    assert events == [
+        ("replace", target),
+        ("dirsync", target.parent),
+        ("dirsync", target.parent.parent),
+        ("dirsync", tmp_path),
+    ]
+
+
+def test_atomic_write_stops_ancestor_sync_at_preexisting_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    existing_parent = tmp_path / "existing"
+    existing_parent.mkdir()
+    target = existing_parent / "created" / "state.json"
+    synced: list[Path] = []
+
+    monkeypatch.setattr(
+        atomic_write_module, "_fsync_directory", lambda path: synced.append(path)
+    )
+
+    atomic_write_text(target, "durable")
+
+    assert target.read_text(encoding="utf-8") == "durable"
+    assert synced == [target.parent, existing_parent]
+
+
 def test_atomic_write_does_not_dirsync_when_replace_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
