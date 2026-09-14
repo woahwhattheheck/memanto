@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -9,12 +10,16 @@ from memanto.app.utils import atomic_write as atomic_write_module
 from memanto.app.utils.atomic_write import atomic_write_text
 
 
-def test_atomic_write_syncs_parent_after_replace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_write_syncs_parent_after_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "state.json"
     events: list[tuple[str, Path]] = []
     real_replace = atomic_write_module.os.replace
 
-    def recording_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    def recording_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
         real_replace(source, destination)
         events.append(("replace", Path(destination)))
 
@@ -37,7 +42,9 @@ def test_atomic_write_syncs_created_parent_chain_inside_out(
     events: list[tuple[str, Path]] = []
     real_replace = atomic_write_module.os.replace
 
-    def recording_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    def recording_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
         real_replace(source, destination)
         events.append(("replace", Path(destination)))
 
@@ -82,7 +89,9 @@ def test_atomic_write_does_not_dirsync_when_replace_fails(
     target = tmp_path / "state.json"
     dirsync_calls: list[Path] = []
 
-    def failing_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    def failing_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
         raise OSError("replace failed")
 
     monkeypatch.setattr(atomic_write_module.os, "replace", failing_replace)
@@ -122,7 +131,7 @@ def test_fsync_directory_flushes_and_closes_descriptor(
     atomic_write_module._fsync_directory(tmp_path)
 
     assert calls[0][0] == "open"
-    opened_path, flags = calls[0][1]
+    opened_path, flags = cast(tuple[Path, int], calls[0][1])
     assert opened_path == tmp_path
     assert flags & os.O_RDONLY == os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
