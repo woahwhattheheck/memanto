@@ -186,5 +186,5 @@ class TestLoopbackDetection:
 
         mock_request = MagicMock()
         mock_request.client.host = "::ffff:127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"host": "[::1]:8000"}
         asyncio.run(_require_local(mock_request))  # must not raise
