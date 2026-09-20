@@ -1,0 +1,47 @@
+name: Security 1852 validation
+
+on:
+  push:
+    branches:
+      - zz-sol-forge/security-1852-ci-69dae
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Ruff lint changed security paths
+        run: >
+          uv run ruff check
+          memanto/app/services/memory_read_service.py
+          memanto/app/services/memory_write_service.py
+          memanto/cli/commands/memory_mgmt.py
+          tests/test_dynamic_memory_injection.py
+
+      - name: Ruff format changed security paths
+        run: >
+          uv run ruff format --check
+          memanto/app/services/memory_read_service.py
+          memanto/app/services/memory_write_service.py
+          memanto/cli/commands/memory_mgmt.py
+          tests/test_dynamic_memory_injection.py
+
+      - name: Focused regression
+        env:
+          MOORCHEH_API_KEY: test-api-key
+        run: uv run pytest -q tests/test_dynamic_memory_injection.py
