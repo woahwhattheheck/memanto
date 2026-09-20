@@ -85,6 +85,7 @@ def test_sync_updates_all_local_connections(tmp_path):
     assert "Rule" in copilot_path.read_text()
     assert "Rule" in claude_path.read_text()
 
+
 def test_local_sync_rejects_instruction_symlink_outside_project(tmp_path):
     home = tmp_path / "home"
     project = home / "repo"

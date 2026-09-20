@@ -173,7 +173,6 @@ def update_all_agents(
     return messages
 
 
-
 def _assert_dynamic_sync_write_scope(
     project_path: Path, target: Path, is_global: bool
 ) -> None:

@@ -83,6 +83,7 @@ def atomic_copy_file(source: Path, destination: Path) -> None:
             except OSError:
                 pass
 
+
 def _lock_path(bundle_path: Path) -> Path:
     """Return the stable sibling lock file for a bundle path."""
     resolved = bundle_path.expanduser().resolve(strict=False)
