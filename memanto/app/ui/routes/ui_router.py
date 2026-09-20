@@ -37,6 +37,7 @@ from memanto.app.config import settings
 from memanto.app.routes.auth_deps import (
     SESSION_COOKIE_NAME,
     _is_cross_site_browser_request,
+    _is_loopback_host_header,
     clear_session_cookie,
     set_session_cookie,
 )
@@ -132,12 +133,13 @@ async def _require_local(request: Request) -> None:
     the filesystem, or replace API credentials without authentication.
     """
     client_host = request.client.host if request.client else None
-    if not _is_loopback(client_host):
+    host_header = request.headers.get("host")
+    if not _is_loopback(client_host) or not _is_loopback_host_header(host_header):
         raise HTTPException(
             status_code=403,
             detail=(
                 "UI management endpoints are only accessible from localhost. "
-                f"Request origin: {client_host}"
+                f"Request origin: {client_host}, host: {host_header}"
             ),
         )
 
