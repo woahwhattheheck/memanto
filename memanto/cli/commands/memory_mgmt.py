@@ -210,9 +210,7 @@ def _check_template_updates(project_dir: str):
 # deliberate user/project authority may cross that boundary. Imported,
 # inferred, observed, or legacy/missing provenance remains available through
 # normal recall but must not silently become a durable instruction.
-TRUSTED_DYNAMIC_PROVENANCE = frozenset(
-    {"explicit_statement", "corrected", "validated"}
-)
+TRUSTED_DYNAMIC_PROVENANCE = frozenset({"explicit_statement", "corrected", "validated"})
 
 
 def _format_trusted_dynamic_memories(
