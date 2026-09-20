@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from memanto.cli.connect.updater import inject_dynamic_memories
 
 SENTINEL_START = "<!-- MEMANTO-DYNAMIC-MEMORIES -->"
@@ -82,3 +84,34 @@ def test_sync_updates_all_local_connections(tmp_path):
 
     assert "Rule" in copilot_path.read_text()
     assert "Rule" in claude_path.read_text()
+
+def test_local_sync_rejects_instruction_symlink_outside_project(tmp_path):
+    home = tmp_path / "home"
+    project = home / "repo"
+    outside = home / "outside-instructions.md"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    _instruction_file(outside)
+    before = outside.read_bytes()
+
+    (project / ".github").mkdir(parents=True)
+    (project / ".github" / "copilot-instructions.md").symlink_to(
+        "../../outside-instructions.md"
+    )
+    connections = {
+        "github-copilot": {
+            "projects": [str(project.resolve())],
+            "installed_global": False,
+        }
+    }
+
+    with patch(
+        "memanto.cli.config.manager.ConfigManager.load_connections",
+        return_value=connections,
+    ):
+        with pytest.raises(ValueError, match="outside project"):
+            inject_dynamic_memories(
+                str(project), "- [INSTRUCTION] attacker-controlled rewrite"
+            )
+
+    assert outside.read_bytes() == before
+
