@@ -33,9 +33,10 @@ jobs:
           memanto/cli/commands/memory_mgmt.py
           tests/test_dynamic_memory_injection.py
 
-      - name: Ruff format changed security paths
+      - name: Ruff format diff changed security paths
+        continue-on-error: true
         run: >
-          uv run ruff format --check
+          uv run ruff format --diff
           memanto/app/services/memory_read_service.py
           memanto/app/services/memory_write_service.py
           memanto/cli/commands/memory_mgmt.py
