@@ -152,3 +152,71 @@ class TestSyncFallsBackToCache:
             )
 
         mock_get_data_dir.assert_not_called()
+
+
+def _symlink_memory_target(project_dir, victim):
+    """Create a repo-controlled MEMORY.md symlink, or skip if unsupported."""
+    project_dir.mkdir(parents=True, exist_ok=True)
+    victim.write_text("outside victim\\n", encoding="utf-8")
+    before = victim.read_bytes()
+    target = project_dir / "MEMORY.md"
+    try:
+        target.symlink_to(victim)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    return target, before
+
+
+class TestSyncDoesNotFollowDestinationSymlink:
+    """Project sync must replace MEMORY.md itself, never its symlink target."""
+
+    @pytest.mark.parametrize("client_cls", [SdkClient, DirectClient])
+    def test_stale_cache_sync_replaces_symlink_without_touching_victim(
+        self, client_cls, monkeypatch, tmp_path
+    ):
+        client = _build_client(client_cls, monkeypatch, tmp_path)
+        cache_file = tmp_path / ".memanto" / "exports" / "test-agent_memory.md"
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(
+            "### Cached Memory\\n\\nsafe cached content\\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            client, "recall", MagicMock(side_effect=ConnectionError("backend down"))
+        )
+
+        project_dir = tmp_path / "project"
+        victim = tmp_path / "outside.md"
+        target, before = _symlink_memory_target(project_dir, victim)
+
+        result = client.sync_memory_to_project(
+            agent_id="test-agent", project_dir=str(project_dir)
+        )
+
+        assert result["source"] == "stale-cache"
+        assert victim.read_bytes() == before
+        assert not target.is_symlink()
+        assert "safe cached content" in target.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("client_cls", [SdkClient, DirectClient])
+    def test_fresh_sync_replaces_symlink_without_touching_victim(
+        self, client_cls, monkeypatch, tmp_path
+    ):
+        client = _build_client(client_cls, monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            client,
+            "recall",
+            MagicMock(return_value={"memories": [{"content": "fresh safe content"}]}),
+        )
+
+        project_dir = tmp_path / "project"
+        victim = tmp_path / "outside.md"
+        target, before = _symlink_memory_target(project_dir, victim)
+
+        result = client.sync_memory_to_project(
+            agent_id="test-agent", project_dir=str(project_dir)
+        )
+
+        assert result["source"] == "fresh"
+        assert victim.read_bytes() == before
+        assert not target.is_symlink()
+        assert "fresh safe content" in target.read_text(encoding="utf-8")
