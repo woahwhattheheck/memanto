@@ -81,13 +81,24 @@ class TestUnauthenticatedUIEndpoints:
         resp = client.put("/api/ui/api-key", json={"api_key": "stolen"})
         assert resp.status_code == 403, f"expected 403, got {resp.status_code}"
 
+    def test_loopback_proxy_with_remote_host_rejected(self):
+        """A loopback reverse proxy must not confer localhost trust to a public Host."""
+        app = _make_app()
+        client = _make_loopback_client(app)
+        resp = client.get(
+            "/api/ui/browse?path=/",
+            headers={"Host": "memanto.example"},
+        )
+        assert resp.status_code == 403, f"expected 403, got {resp.status_code}"
+        assert "host: memanto.example" in resp.json()["detail"]
+
     def test_loopback_cross_site_origin_rejected(self):
         """Local browser requests from another website must not reach UI endpoints."""
         app = _make_app()
         client = _make_loopback_client(app)
         resp = client.post(
             "/api/ui/shutdown",
-            headers={"Origin": "https://evil.example"},
+            headers={"Host": "localhost:8000", "Origin": "https://evil.example"},
         )
         assert resp.status_code == 403, f"expected 403, got {resp.status_code}"
         assert resp.json()["detail"] == (
@@ -100,7 +111,7 @@ class TestUnauthenticatedUIEndpoints:
         client = _make_loopback_client(app)
         resp = client.post(
             "/api/ui/shutdown",
-            headers={"Sec-Fetch-Site": "cross-site"},
+            headers={"Host": "localhost:8000", "Sec-Fetch-Site": "cross-site"},
         )
         assert resp.status_code == 403, f"expected 403, got {resp.status_code}"
         assert resp.json()["detail"] == (
@@ -166,7 +177,7 @@ class TestLoopbackDetection:
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"host": "localhost:8000"}
         asyncio.run(_require_local(mock_request))  # must not raise
 
     def test_require_local_allows_ipv4_mapped_loopback(self):
@@ -175,5 +186,5 @@ class TestLoopbackDetection:
 
         mock_request = MagicMock()
         mock_request.client.host = "::ffff:127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"host": "[::1]:8000"}
         asyncio.run(_require_local(mock_request))  # must not raise
