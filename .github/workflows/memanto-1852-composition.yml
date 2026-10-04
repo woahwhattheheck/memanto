@@ -1,0 +1,125 @@
+name: Memanto 1852 focused composition
+run-name: Memanto 1852 composition at 79f6ee17
+
+on:
+  push:
+    branches:
+      - validation/kestrel-1004-memanto-composition
+    paths:
+      - .github/workflows/memanto-1852-composition.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: memanto-1852-focused-composition
+  cancel-in-progress: false
+
+jobs:
+  composition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      MOORCHEH_API_KEY: test-api-key
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 79f6ee17c06496b53a2652a8033ba77b3d83f599
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the package and its declared test dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/memanto-composition-venv"
+          echo "$RUNNER_TEMP/memanto-composition-venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/memanto-composition-venv/bin/python" -m pip install -e . \
+            'pytest>=8.2.0,<9' 'pytest-asyncio>=0.21.0' \
+            'pytest-mock>=3.12.0,<4' 'pytest-timeout>=2.1.0'
+      - name: Record exact source and environment
+        run: |
+          test "$(git rev-parse HEAD)" = 79f6ee17c06496b53a2652a8033ba77b3d83f599
+          git rev-parse HEAD
+          python --version
+          uname -srmo
+          python -m pip freeze
+          sha256sum pytest.ini pyproject.toml tests/conftest.py \
+            tests/test_client_session_agent_scope.py \
+            tests/test_conversation_token_redaction.py tests/test_unit.py
+          mkdir -p "$RUNNER_TEMP/memanto-composition-home"
+      - name: Run existing cases together with repository configuration
+        env:
+          HOME: ${{ runner.temp }}/memanto-composition-home
+        shell: bash
+        run: |
+          set -o pipefail
+          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/memanto-composition.log"
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          attempts = []
+          blocked_events = {
+              'socket.connect', 'socket.getaddrinfo',
+              'socket.gethostbyname', 'socket.gethostbyaddr',
+          }
+
+          def no_network(event, args):
+              if event in blocked_events:
+                  attempts.append(event)
+                  raise RuntimeError('Network access is disabled for this local composition run')
+
+          sys.addaudithook(no_network)
+          import pytest
+
+          cases = [
+              'tests/test_client_session_agent_scope.py',
+              'tests/test_conversation_token_redaction.py',
+              'tests/test_unit.py::TestSessionService::test_create_session',
+              'tests/test_unit.py::TestSessionService::test_active_session_read_waits_for_marker_update',
+              'tests/test_unit.py::TestSessionService::test_active_marker_interleaving_preserves_other_agent_session',
+              'tests/test_unit.py::TestSessionService::test_active_marker_text_fallback_preserves_sessions',
+              'tests/test_unit.py::TestSessionService::test_active_marker_replace_failure_keeps_previous_marker',
+          ]
+          junit = str(Path(os.environ['RUNNER_TEMP']) / 'memanto-composition.xml')
+          args = ['-c', 'pytest.ini', '-vv', '-ra', '-p', 'no:cacheprovider',
+                  '--import-mode=importlib', '--junitxml=' + junit, *cases]
+          print('PYTEST_ARGS=' + json.dumps(args), flush=True)
+          code = int(pytest.main(args))
+          result = {
+              'source_sha': '79f6ee17c06496b53a2652a8033ba77b3d83f599',
+              'python': sys.version,
+              'pytest': pytest.__version__,
+              'pytest_config': 'pytest.ini',
+              'pytest_exit_code': code,
+              'blocked_network_events': attempts,
+              'selected_paths_and_nodes': cases,
+          }
+          print('COMPOSITION_RESULT=' + json.dumps(result, sort_keys=True), flush=True)
+          Path(os.environ['RUNNER_TEMP'], 'memanto-composition-result.json').write_text(
+              json.dumps(result, indent=2) + '\n', encoding='utf-8')
+          raise SystemExit(code if code else (1 if attempts else 0))
+          PY
+      - name: Preserve the measured result in the run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Memanto 1852 composition'
+            echo 'Pinned product source: `79f6ee17c06496b53a2652a8033ba77b3d83f599`'
+            echo 'Existing session/agent-scope, conversation-token-redaction and five active-marker cases only.'
+            echo 'One Python environment; original pytest.ini and conftest.py. No live service or full-suite claim.'
+            echo '```json'
+            if test -f "$RUNNER_TEMP/memanto-composition-result.json"; then
+              cat "$RUNNER_TEMP/memanto-composition-result.json"
+            else
+              echo '{"result":"environment_or_execution_failure_before_result"}'
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if test -f "$RUNNER_TEMP/memanto-composition.xml"; then
+            cat "$RUNNER_TEMP/memanto-composition.xml"
+          fi
