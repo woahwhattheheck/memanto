@@ -242,18 +242,24 @@ class AgentService:
         Raises:
             AgentNotFoundError: If agent doesn't exist
         """
-        agent = self.get_agent(agent_id)
-        if not agent:
-            raise AgentNotFoundError(f"Agent '{agent_id}' not found")
+        agent_file = self._get_agent_file(agent_id)
+        lock_file = agent_file.with_suffix(".json.lock")
 
-        if last_session:
-            agent.last_session = last_session
+        # Share the creation/deletion lock across the entire read-modify-write.
+        # Atomic replacement alone can lose increments or restore a deleted agent.
+        with FileLock(str(lock_file), timeout=5):
+            agent = self.get_agent(agent_id)
+            if not agent:
+                raise AgentNotFoundError(f"Agent '{agent_id}' not found")
 
-        if increment_session_count:
-            agent.session_count += 1
+            if last_session:
+                agent.last_session = last_session
 
-        self._save_agent(agent)
-        return agent
+            if increment_session_count:
+                agent.session_count += 1
+
+            self._save_agent(agent)
+            return agent
 
     def delete_agent(self, agent_id: str) -> None:
         """
