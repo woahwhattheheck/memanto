@@ -1,0 +1,82 @@
+name: Memanto 1852 focused composition
+run-name: Memanto 1852 focused PEM scan comparison
+
+on:
+  push:
+    branches:
+      - validation/mariner-b3f8-pem-scan
+    paths:
+      - .github/workflows/memanto-1852-composition.yml
+      - .github/scripts/memanto-pem-scan.py
+      - memanto/app/services/conversation_memory_extraction_service.py
+      - tests/test_conversation_memory_extraction.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: memanto-1852-focused-pem-scan
+  cancel-in-progress: false
+
+jobs:
+  composition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      MOORCHEH_API_KEY: test-api-key
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the package and its declared test dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/memanto-composition-venv"
+          echo "$RUNNER_TEMP/memanto-composition-venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/memanto-composition-venv/bin/python" -m pip install -e . \
+            'pytest>=8.2.0,<9' 'pytest-asyncio>=0.21.0' \
+            'pytest-mock>=3.12.0,<4' 'pytest-timeout>=2.1.0'
+      - name: Record exact source and environment
+        run: |
+          git rev-parse HEAD
+          python --version
+          uname -srmo
+          python -m pip freeze
+          sha256sum pytest.ini pyproject.toml tests/conftest.py \
+            memanto/app/services/conversation_memory_extraction_service.py \
+            tests/test_conversation_memory_extraction.py
+          mkdir -p "$RUNNER_TEMP/memanto-composition-home"
+      - name: Compare the actual normalizer and run focused PEM cases
+        env:
+          HOME: ${{ runner.temp }}/memanto-composition-home
+        shell: bash
+        run: |
+          set -o pipefail
+          python .github/scripts/memanto-pem-scan.py \
+            2>&1 | tee "$RUNNER_TEMP/memanto-pem-scan.log"
+      - name: Preserve the measured result in the run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Memanto 1852 focused PEM scan'
+            echo 'Baseline product source: 8934ad1a7bbdf01c75d82feba5092e8ee23eadcc'
+            echo 'Candidate source is the workflow head shown below.'
+            echo 'Actual normalizer comparison, six PEM boundary cases, one bounded-work extraction regression, and the existing helper control.'
+            echo 'Real package, original pytest.ini/conftest.py, no live service or full-suite claim.'
+            echo '~~~json'
+            if test -f "$RUNNER_TEMP/memanto-pem-scan-result.json"; then
+              cat "$RUNNER_TEMP/memanto-pem-scan-result.json"
+            else
+              echo '{"result":"environment_or_execution_failure_before_result"}'
+            fi
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if test -f "$RUNNER_TEMP/memanto-pem-scan.xml"; then
+            cat "$RUNNER_TEMP/memanto-pem-scan.xml"
+          fi
