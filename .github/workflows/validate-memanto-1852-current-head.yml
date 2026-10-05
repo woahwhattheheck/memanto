@@ -1,4 +1,4 @@
-name: Memanto 1852 focused repair gate
+name: Memanto 1852 repaired current-head gate
 
 on:
   push:
@@ -6,90 +6,38 @@ on:
       - validation/sol-mc-packager-08-memanto-fa8c6a5-20261005
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair-current-head-tests:
+  repaired-current-head-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      SOURCE_HEAD: fa8c6a5d2f6c0f953bb88d2dacf388f5ab01b8c7
-      TARGET_BRANCH: fix/1852-local-sync-scope-20260920
+      SOURCE_HEAD: f6c7885406c233bdb5c6f12eafe33d86a8cdf511
       MOORCHEH_API_KEY: test-api-key
 
     steps:
-      - name: Check out exact PR carrier
+      - name: Check out exact repaired PR carrier
         uses: actions/checkout@v4
         with:
           ref: fix/1852-local-sync-scope-20260920
           fetch-depth: 2
 
-      - name: Fail closed on head movement
+      - name: Prove repaired source identity
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
-          git status --short
-
-      - name: Apply count-asserted test reconciliation
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          def replace_once(path: str, old: str, new: str) -> None:
-              file_path = Path(path)
-              text = file_path.read_text(encoding="utf-8")
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(
-                      f"{path}: expected exactly one replacement, found {count}"
-                  )
-              file_path.write_text(text.replace(old, new, 1), encoding="utf-8")
-
-          replace_once(
-              "tests/test_export_resilience.py",
-              '        raw_path = tmp_path / "raw-memory.md"\n',
-              '        # Explicit exports remain confined to the active data root.\n'
-              '        raw_path = tmp_path / ".memanto" / "exports" / "raw-memory.md"\n',
-          )
-          replace_once(
-              "tests/test_okf.py",
-              '    assert rows["Other fact"]["provenance"] == "validated"\n',
-              '    # Unsigned OKF input cannot preserve a trust-bearing label.\n'
-              '    assert rows["Other fact"]["provenance"] == "imported"\n',
-          )
-          replace_once(
-              "tests/test_unit.py",
-              "from concurrent.futures import ThreadPoolExecutor\n",
-              "from concurrent.futures import ThreadPoolExecutor\n"
-              "from contextlib import nullcontext\n",
-          )
-          replace_once(
-              "tests/test_unit.py",
-              "        original_symlink = Path.symlink_to\n"
-              "        observed = {}\n\n"
-              "        def interleaved_symlink(path, target, *args, **kwargs):\n",
-              "        original_symlink = Path.symlink_to\n"
-              "        observed = {}\n\n"
-              "        # Cooperative peers are serialized by active.lock. Bypass the peer's\n"
-              "        # lock only to retain coverage for the staged-link publication race.\n"
-              "        monkeypatch.setattr(other, \"_hold_active_marker_lock\", lambda: nullcontext())\n\n"
-              "        def interleaved_symlink(path, target, *args, **kwargs):\n",
-          )
-          replace_once(
-              "tests/test_unit.py",
-              "    def fresh_export(*, agent_id, output_path, limit_per_type):\n"
-              "        export_calls.append((agent_id, limit_per_type))\n",
-              "    def fresh_export(*, agent_id, output_path, limit_per_type, _project_sync=False):\n"
-              "        assert _project_sync is True\n"
-              "        export_calls.append((agent_id, limit_per_type))\n",
-          )
-          PY
-          git diff --check
-          test "$(git diff --name-only | sort)" = "$(printf '%s\n' tests/test_export_resilience.py tests/test_okf.py tests/test_unit.py | sort)"
-          git diff --stat
+          test "$(git rev-parse HEAD^)" = "fa8c6a5d2f6c0f953bb88d2dacf388f5ab01b8c7"
+          mkdir -p artifacts
+          {
+            echo "source_head=$(git rev-parse HEAD)"
+            echo "source_parent=$(git rev-parse HEAD^)"
+            echo "source_tree=$(git rev-parse HEAD^{tree})"
+            echo "changed_paths:"
+            git diff --name-only HEAD^ HEAD
+          } | tee artifacts/source-identity.txt
+          test "$(git diff --name-only HEAD^ HEAD | sort)" = "$(printf '%s\n' tests/test_export_resilience.py tests/test_okf.py tests/test_unit.py | sort)"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -101,54 +49,28 @@ jobs:
 
       - name: Install repository dependencies
         shell: bash
-        run: uv sync --all-extras --dev
+        run: |
+          set -euo pipefail
+          python -VV 2>&1 | tee artifacts/python-version.txt
+          uv --version 2>&1 | tee artifacts/uv-version.txt
+          uv sync --all-extras --dev 2>&1 | tee artifacts/uv-sync.log
 
       - name: Create version fallback
         shell: bash
         run: echo '__version__ = "0.0.0.dev0"' > memanto/app/_version.py
 
-      - name: Run only the seven observed failures
+      - name: Run repository-native full test suite once
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts
-          uv run pytest -q --tb=short \
-            tests/test_export_resilience.py::TestProjectSyncTrustBoundary::test_project_sync_keeps_only_trusted_sensitive_rows \
-            tests/test_okf.py::test_okf_round_trip_preserves_literal_record_sentinels \
-            tests/test_unit.py::TestSessionService::test_active_marker_interleaving_preserves_other_agent_session \
-            tests/test_unit.py::test_direct_sync_exports_fresh_before_copying \
-            --junitxml=artifacts/focused-pytest.xml 2>&1 | tee artifacts/focused-pytest.log
+          set -o pipefail
+          uv run pytest tests/ -q --tb=short --junitxml=artifacts/pytest.xml 2>&1 | tee artifacts/pytest.log
 
-      - name: Check modified tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run ruff check \
-            tests/test_export_resilience.py tests/test_okf.py tests/test_unit.py \
-            2>&1 | tee artifacts/ruff-check.log
-          uv run ruff format --check \
-            tests/test_export_resilience.py tests/test_okf.py tests/test_unit.py \
-            2>&1 | tee artifacts/ruff-format.log
-
-      - name: Commit and push to the existing PR branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
-          test "$(git diff --name-only | sort)" = "$(printf '%s\n' tests/test_export_resilience.py tests/test_okf.py tests/test_unit.py | sort)"
-          git config user.name "woahwhattheheck"
-          git config user.email "293286387+woahwhattheheck@users.noreply.github.com"
-          git add tests/test_export_resilience.py tests/test_okf.py tests/test_unit.py
-          git commit -m "test: reconcile cumulative security hardening expectations"
-          git rev-parse HEAD | tee artifacts/repair-commit.txt
-          git show --stat --oneline --no-renames HEAD | tee artifacts/repair-stat.txt
-          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
-
-      - name: Upload focused repair receipt
+      - name: Upload final validation receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: memanto-1852-focused-repair-fa8c6a5
+          name: memanto-1852-current-head-f6c7885
           path: artifacts/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
