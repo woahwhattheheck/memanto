@@ -1,0 +1,75 @@
+name: Memanto 1852 current-head gate
+
+on:
+  push:
+    branches:
+      - validation/sol-mc-packager-08-memanto-fa8c6a5-20261005
+
+permissions:
+  contents: read
+
+jobs:
+  current-head-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOURCE_PARENT: fa8c6a5d2f6c0f953bb88d2dacf388f5ab01b8c7
+      MOORCHEH_API_KEY: test-api-key
+
+    steps:
+      - name: Check out validation child
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Prove source identity and workflow-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$SOURCE_PARENT"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/validate-memanto-1852-current-head.yml"
+          mkdir -p artifacts
+          {
+            echo "validation_commit=$(git rev-parse HEAD)"
+            echo "source_parent=$(git rev-parse HEAD^)"
+            echo "source_tree=$(git rev-parse HEAD^{tree})"
+            echo "validation_tree=$(git rev-parse HEAD^{tree})"
+            echo "changed_path=$(git diff --name-only HEAD^ HEAD)"
+          } | tee artifacts/source-identity.txt
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python -VV 2>&1 | tee artifacts/python-version.txt
+          uv --version 2>&1 | tee artifacts/uv-version.txt
+          uv sync --all-extras --dev 2>&1 | tee artifacts/uv-sync.log
+
+      - name: Create version fallback
+        shell: bash
+        run: echo '__version__ = "0.0.0.dev0"' > memanto/app/_version.py
+
+      - name: Run repository-native full test suite once
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          uv run pytest tests/ -q --tb=short --junitxml=artifacts/pytest.xml 2>&1 | tee artifacts/pytest.log
+
+      - name: Upload validation receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memanto-1852-current-head-fa8c6a5
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
