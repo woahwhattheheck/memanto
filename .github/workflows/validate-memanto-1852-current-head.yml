@@ -75,18 +75,14 @@ jobs:
               "        observed = {}\n\n"
               "        # Cooperative peers are serialized by active.lock. Bypass the peer's\n"
               "        # lock only to retain coverage for the staged-link publication race.\n"
-              "        monkeypatch.setattr(\n"
-              "            other, \"_hold_active_marker_lock\", lambda: nullcontext()\n"
-              "        )\n\n"
+              "        monkeypatch.setattr(other, \"_hold_active_marker_lock\", lambda: nullcontext())\n\n"
               "        def interleaved_symlink(path, target, *args, **kwargs):\n",
           )
           replace_once(
               "tests/test_unit.py",
               "    def fresh_export(*, agent_id, output_path, limit_per_type):\n"
               "        export_calls.append((agent_id, limit_per_type))\n",
-              "    def fresh_export(\n"
-              "        *, agent_id, output_path, limit_per_type, _project_sync=False\n"
-              "    ):\n"
+              "    def fresh_export(*, agent_id, output_path, limit_per_type, _project_sync=False):\n"
               "        assert _project_sync is True\n"
               "        export_calls.append((agent_id, limit_per_type))\n",
           )
